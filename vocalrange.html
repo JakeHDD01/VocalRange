@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Classificação Vocal</title>
+<style>
+body {
+    font-family: Arial;
+    background: #111;
+    color: white;
+    text-align: center;
+}
+button {
+    padding: 15px;
+    margin: 10px;
+    font-size: 18px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+#controls {
+    margin-top: 20px;
+    display: none;
+}
+#result {
+    margin-top: 20px;
+    font-size: 20px;
+}
+</style>
+</head>
+<body>
+<h1>Teste de Classificação Vocal</h1>
+
+<button id="micBtn">🔊 Ativar Microfone</button>
+
+<div id="controls">
+    <button id="highBtn">🎤 Testar Agudo</button>
+    <button id="lowBtn">🎤 Testar Grave</button>
+</div>
+
+<div id="result">Ative o microfone primeiro.</div>
+
+<script>
+let audioContext;
+let analyser;
+let micStream;
+let buffer;
+let highest = 0;
+let lowest = 9999;
+
+// Solicita permissão
+async function requestMicPermission() {
+    try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // Criar contexto de áudio após permissão
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(micStream);
+
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        buffer = new Float32Array(analyser.fftSize);
+
+        source.connect(analyser);
+
+        document.getElementById("result").innerText = "Microfone ativado! Agora teste seu agudo ou grave.";
+        document.getElementById("controls").style.display = "block";
+
+        return true;
+    } catch (err) {
+        alert("Erro ao ativar microfone: " + err);
+        return false;
+    }
+}
+
+// Detector YIN preciso
+function detectPitchYIN(buf, sampleRate) {
+    let threshold = 0.10;
+    const yinBuffer = new Float32Array(buf.length / 2);
+    let tau;
+
+    for (let t = 1; t < yinBuffer.length; t++) {
+        let sum = 0;
+        for (let i = 0; i < yinBuffer.length; i++) {
+            let delta = buf[i] - buf[i + t];
+            sum += delta * delta;
+        }
+        yinBuffer[t] = sum;
+    }
+
+    let runningSum = 0;
+    yinBuffer[0] = 1;
+    for (let t = 1; t < yinBuffer.length; t++) {
+        runningSum += yinBuffer[t];
+        yinBuffer[t] *= t / runningSum;
+    }
+
+    for (tau = 2; tau < yinBuffer.length; tau++) {
+        if (yinBuffer[tau] < threshold) {
+            return sampleRate / tau;
+        }
+    }
+    return null;
+}
+
+function freqToNote(freq) {
+    if (!freq || freq < 20 || freq > 2000) return "--";
+    const A4 = 440;
+    const noteNames = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+    let semitones = Math.round(12 * Math.log2(freq / A4));
+    let noteIndex = (semitones + 9) % 12;
+    let octave = 4 + Math.floor((semitones + 9) / 12);
+    return noteNames[noteIndex] + octave;
+}
+
+function classify(low, high) {
+    const ranges = {
+        "Baixo":      { low: 82,  high: 330 },
+        "Barítono":   { low: 110, high: 440 },
+        "Tenor":      { low: 130, high: 523 },
+        "Contralto":  { low: 175, high: 698 },
+        "Mezzo":      { low: 220, high: 880 },
+        "Soprano":    { low: 261, high: 1046 }
+    };
+
+    for (let name in ranges) {
+        let r = ranges[name];
+        if (low >= r.low * 0.8 && high <= r.high * 1.2) return name;
+    }
+    return "Indefinido";
+}
+
+// INICIA O TESTE
+function start(type) {
+    function loop() {
+        analyser.getFloatTimeDomainData(buffer);
+        let freq = detectPitchYIN(buffer, audioContext.sampleRate);
+
+        if (freq) {
+            if (type === "high" && freq > highest) highest = freq;
+            if (type === "low" && freq < lowest) lowest = freq;
+
+            document.getElementById("result").innerHTML = `
+                Grave: ${lowest.toFixed(1)} Hz (${freqToNote(lowest)})<br>
+                Agudo: ${highest.toFixed(1)} Hz (${freqToNote(highest)})<br><br>
+                <b>Classificação:</b> ${classify(lowest, highest)}
+            `;
+        }
+
+        requestAnimationFrame(loop);
+    }
+    loop();
+}
+
+// BOTÕES
+document.getElementById("micBtn").onclick = requestMicPermission;
+document.getElementById("highBtn").onclick = () => start("high");
+document.getElementById("lowBtn").onclick = () => start("low");
+</script>
+
+</body>
+</html>
